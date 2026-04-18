@@ -1,17 +1,20 @@
 import streamlit as st
 import requests
 import os
+import time
 
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 
-# RAG imports
+# RAG imports (updated)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-# 🔑 ENV VARIABLES
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# -------------------------------
+# 🔑 Secrets (Streamlit Cloud)
+# -------------------------------
+GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 
 HEADERS = {
     "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -31,25 +34,20 @@ def get_repo_files(repo):
         return ""
 
     contents = []
-
     for file in res.json():
-        if file["type"] == "file" and file["name"].endswith((".py", ".js", ".html", ".ipynb")):
+        if file["type"] == "file" and file["name"].endswith((".py", ".js", ".html")):
             file_res = requests.get(file["download_url"])
             if file_res.status_code == 200:
-                contents.append(file_res.text[:2000])  # limit size
+                contents.append(file_res.text[:2000])
 
     return "\n".join(contents)
 
 # -------------------------------
-# 🔹 Build FAISS Vector DB
+# 🔹 Build FAISS DB (LOCAL EMBEDDINGS)
 # -------------------------------
 @st.cache_resource
 def build_vector_db(code_text):
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100
-    )
-
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = splitter.split_text(code_text)
 
     embeddings = HuggingFaceEmbeddings(
@@ -57,95 +55,132 @@ def build_vector_db(code_text):
     )
 
     db = FAISS.from_texts(chunks, embeddings)
-
     return db
 
 # -------------------------------
-# 🔹 Retrieve Relevant Context
+# 🔹 Retrieve Context
 # -------------------------------
 def get_context(db, query):
     docs = db.similarity_search(query, k=3)
     return "\n".join([d.page_content for d in docs])
 
 # -------------------------------
-# 🔹 Generate Viva Questions
+# 🔹 Fallback Questions
 # -------------------------------
-def generate_questions(db):
-    context = get_context(db, "overall project functionality")
+def fallback_questions():
+    return [
+        "Explain the main functionality of your project.",
+        "What is the core logic used?",
+        "Why did you choose this approach?",
+        "What are limitations?",
+        "How can this be improved?"
+    ]
 
+# -------------------------------
+# 🔹 Generate Questions (with retry)
+# -------------------------------
+def generate_questions_llm(context):
     prompt = f"""
-    Based on this project code, generate 5 viva questions:
-    - 2 easy
-    - 2 medium
-    - 1 hard
-    Focus on logic and implementation only.
+    Generate 5 viva questions (2 easy, 2 medium, 1 hard)
+    based on this code:
 
-    Context:
-    {context}
+    {context[:2000]}
     """
 
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
+    for attempt in range(5):
+        try:
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}]
+            )
 
-    questions = res.choices[0].message.content.split("\n")
+            return [q.strip() for q in res.choices[0].message.content.split("\n") if q.strip()]
 
-    # clean empty lines
-    return [q.strip() for q in questions if q.strip()]
+        except RateLimitError:
+            time.sleep(2 ** attempt)
+
+    return fallback_questions()
 
 # -------------------------------
-# 🔹 Evaluate Student Answer
+# 🔹 Cache Questions
+# -------------------------------
+@st.cache_data(show_spinner=False)
+def generate_questions_cached(context):
+    return generate_questions_llm(context)
+
+# -------------------------------
+# 🔹 Evaluate Answer
 # -------------------------------
 def evaluate_answer(db, question, answer):
     context = get_context(db, question)
 
     prompt = f"""
-    You are evaluating a student's viva answer.
-
-    Context from code:
-    {context}
+    Context:
+    {context[:1500]}
 
     Question: {question}
-    Student Answer: {answer}
+    Answer: {answer}
 
-    Evaluate strictly based on context.
-
-    Give:
-    Score: X/3
-    Reason: short explanation
+    Score out of 3.
+    Format:
+    Score: X
+    Reason: short
     """
 
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return res.choices[0].message.content
 
-    return res.choices[0].message.content
+    except RateLimitError:
+        return "Score: 1\nReason: Could not evaluate due to rate limit"
 
 # -------------------------------
-# 🔹 STREAMLIT UI
+# 🔹 UI
 # -------------------------------
-st.title("🎤 RAG-Based Viva Evaluation System")
+st.title("🎤 RAG Viva Evaluation (Stable Version)")
 
 repo = st.text_input("Enter GitHub Repo (username/repo)")
 
-# -------- Start Viva --------
+# Throttle control
+if "last_call" not in st.session_state:
+    st.session_state["last_call"] = 0
+
+# -------------------------------
+# 🔹 Generate Questions
+# -------------------------------
 if st.button("Generate Viva Questions"):
-    code = get_repo_files(repo)
+    now = time.time()
 
-    if not code:
-        st.error("❌ Could not fetch repo or repo is private")
+    if now - st.session_state["last_call"] < 5:
+        st.warning("Please wait before generating again")
     else:
-        db = build_vector_db(code)
-        st.session_state["db"] = db
-        st.session_state["questions"] = generate_questions(db)
+        st.session_state["last_call"] = now
 
-        st.success("✅ Questions Generated")
+        code = get_repo_files(repo)
 
-# -------- Display Questions --------
+        if not code:
+            st.error("❌ Could not fetch repo")
+        else:
+            code = code[:5000]
+
+            db = build_vector_db(code)
+            st.session_state["db"] = db
+
+            context = get_context(db, "project functionality")
+
+            questions = generate_questions_cached(context)
+
+            st.session_state["questions"] = questions
+            st.success("✅ Questions Ready")
+
+# -------------------------------
+# 🔹 Display Questions
+# -------------------------------
 if "questions" in st.session_state:
-    st.markdown("## 📝 Answer the Following Questions")
+    st.markdown("## 📝 Answer Questions")
 
     answers = []
 
@@ -154,28 +189,25 @@ if "questions" in st.session_state:
         ans = st.text_input(f"Answer {i+1}", key=f"ans_{i}")
         answers.append(ans)
 
-    # -------- Submit --------
+    # -------------------------------
+    # 🔹 Submit
+    # -------------------------------
     if st.button("Submit Viva"):
-        total_score = 0
+        total = 0
 
         st.markdown("## 📊 Evaluation")
 
         for i, q in enumerate(st.session_state["questions"]):
-            result = evaluate_answer(
-                st.session_state["db"],
-                q,
-                answers[i]
-            )
+            result = evaluate_answer(st.session_state["db"], q, answers[i])
 
             st.write(f"**Q{i+1}:** {result}")
 
-            # simple score extraction
             if "3" in result:
-                total_score += 3
+                total += 3
             elif "2" in result:
-                total_score += 2
+                total += 2
             else:
-                total_score += 1
+                total += 1
 
         st.markdown("---")
-        st.subheader(f"🎯 Viva Marks: {total_score} / 15")
+        st.subheader(f"🎯 Viva Marks: {total} / 15")
