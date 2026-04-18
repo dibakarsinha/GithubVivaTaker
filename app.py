@@ -7,7 +7,7 @@ from openai import OpenAI
 # RAG imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # 🔑 ENV VARIABLES
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -52,7 +52,10 @@ def build_vector_db(code_text):
 
     chunks = splitter.split_text(code_text)
 
-    embeddings = OpenAIEmbeddings()
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
     db = FAISS.from_texts(chunks, embeddings)
 
     return db
