@@ -5,9 +5,9 @@ import os
 from openai import OpenAI
 
 # RAG imports
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import OpenAIEmbeddings
 
 # 🔑 ENV VARIABLES
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
