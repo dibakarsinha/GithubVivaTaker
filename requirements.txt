@@ -1,0 +1,6 @@
+streamlit
+requests
+faiss-cpu==1.7.4
+langchain
+openai
+tiktoken
