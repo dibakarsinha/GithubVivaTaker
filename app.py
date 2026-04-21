@@ -1,34 +1,16 @@
 import streamlit as st
 import requests
-import os
-import time
 
-from openai import OpenAI, RateLimitError
-
-# RAG imports (updated)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
-# -------------------------------
-# 🔑 Secrets (Streamlit Cloud)
-# -------------------------------
-GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-
-HEADERS = {
-    "Authorization": f"Bearer {GITHUB_TOKEN}",
-    "Accept": "application/vnd.github+json"
-}
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------------------
 # 🔹 Fetch Repo Files
 # -------------------------------
 def get_repo_files(repo):
     url = f"https://api.github.com/repos/{repo}/contents"
-    res = requests.get(url, headers=HEADERS)
+    res = requests.get(url)
 
     if res.status_code != 200:
         return ""
@@ -43,7 +25,7 @@ def get_repo_files(repo):
     return "\n".join(contents)
 
 # -------------------------------
-# 🔹 Build FAISS DB (LOCAL EMBEDDINGS)
+# 🔹 Build FAISS DB
 # -------------------------------
 @st.cache_resource
 def build_vector_db(code_text):
@@ -58,126 +40,59 @@ def build_vector_db(code_text):
     return db
 
 # -------------------------------
-# 🔹 Retrieve Context
+# 🔹 Generate Questions (Offline)
 # -------------------------------
-def get_context(db, query):
-    docs = db.similarity_search(query, k=3)
-    return "\n".join([d.page_content for d in docs])
-
-# -------------------------------
-# 🔹 Fallback Questions
-# -------------------------------
-def fallback_questions():
+def generate_questions():
     return [
         "Explain the main functionality of your project.",
-        "What is the core logic used?",
-        "Why did you choose this approach?",
-        "What are limitations?",
-        "How can this be improved?"
+        "Describe the core logic used in your code.",
+        "What technologies or libraries are used and why?",
+        "What are the limitations of your implementation?",
+        "How can this project be improved?"
     ]
 
 # -------------------------------
-# 🔹 Generate Questions (with retry)
+# 🔹 Evaluate Answer (Simple Scoring)
 # -------------------------------
-def generate_questions_llm(context):
-    prompt = f"""
-    Generate 5 viva questions (2 easy, 2 medium, 1 hard)
-    based on this code:
+def evaluate_answer(context, answer):
+    score = 0
 
-    {context[:2000]}
-    """
+    # Basic keyword matching
+    context_words = set(context.lower().split())
+    answer_words = set(answer.lower().split())
 
-    for attempt in range(5):
-        try:
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}]
-            )
+    match_ratio = len(context_words & answer_words) / (len(context_words) + 1)
 
-            return [q.strip() for q in res.choices[0].message.content.split("\n") if q.strip()]
+    if match_ratio > 0.2:
+        score = 3
+    elif match_ratio > 0.1:
+        score = 2
+    else:
+        score = 1
 
-        except RateLimitError:
-            time.sleep(2 ** attempt)
-
-    return fallback_questions()
-
-# -------------------------------
-# 🔹 Cache Questions
-# -------------------------------
-@st.cache_data(show_spinner=False)
-def generate_questions_cached(context):
-    return generate_questions_llm(context)
-
-# -------------------------------
-# 🔹 Evaluate Answer
-# -------------------------------
-def evaluate_answer(db, question, answer):
-    context = get_context(db, question)
-
-    prompt = f"""
-    Context:
-    {context[:1500]}
-
-    Question: {question}
-    Answer: {answer}
-
-    Score out of 3.
-    Format:
-    Score: X
-    Reason: short
-    """
-
-    try:
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return res.choices[0].message.content
-
-    except RateLimitError:
-        return "Score: 1\nReason: Could not evaluate due to rate limit"
+    return score
 
 # -------------------------------
 # 🔹 UI
 # -------------------------------
-st.title("🎤 RAG Viva Evaluation (Stable Version)")
+st.title("🎤 Offline RAG Viva (No API, No Limits)")
 
 repo = st.text_input("Enter GitHub Repo (username/repo)")
 
-# Throttle control
-if "last_call" not in st.session_state:
-    st.session_state["last_call"] = 0
+if st.button("Start Viva"):
+    code = get_repo_files(repo)
 
-# -------------------------------
-# 🔹 Generate Questions
-# -------------------------------
-if st.button("Generate Viva Questions"):
-    now = time.time()
-
-    if now - st.session_state["last_call"] < 5:
-        st.warning("Please wait before generating again")
+    if not code:
+        st.error("❌ Could not fetch repo")
     else:
-        st.session_state["last_call"] = now
+        code = code[:5000]
+        db = build_vector_db(code)
 
-        code = get_repo_files(repo)
-
-        if not code:
-            st.error("❌ Could not fetch repo")
-        else:
-            code = code[:5000]
-
-            db = build_vector_db(code)
-            st.session_state["db"] = db
-
-            context = get_context(db, "project functionality")
-
-            questions = generate_questions_cached(context)
-
-            st.session_state["questions"] = questions
-            st.success("✅ Questions Ready")
+        st.session_state["db"] = db
+        st.session_state["questions"] = generate_questions()
 
 # -------------------------------
-# 🔹 Display Questions
+# 🔹 Questions
 # -------------------------------
 if "questions" in st.session_state:
     st.markdown("## 📝 Answer Questions")
@@ -189,25 +104,18 @@ if "questions" in st.session_state:
         ans = st.text_input(f"Answer {i+1}", key=f"ans_{i}")
         answers.append(ans)
 
-    # -------------------------------
-    # 🔹 Submit
-    # -------------------------------
     if st.button("Submit Viva"):
         total = 0
 
         st.markdown("## 📊 Evaluation")
 
         for i, q in enumerate(st.session_state["questions"]):
-            result = evaluate_answer(st.session_state["db"], q, answers[i])
+            context = st.session_state["db"].similarity_search(q, k=1)[0].page_content
 
-            st.write(f"**Q{i+1}:** {result}")
+            score = evaluate_answer(context, answers[i])
 
-            if "3" in result:
-                total += 3
-            elif "2" in result:
-                total += 2
-            else:
-                total += 1
+            st.write(f"Q{i+1}: Score {score}/3")
+            total += score
 
         st.markdown("---")
         st.subheader(f"🎯 Viva Marks: {total} / 15")
