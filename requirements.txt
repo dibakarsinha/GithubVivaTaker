@@ -1,7 +1,11 @@
 streamlit
 requests
+pandas
 faiss-cpu
 langchain
 langchain-community
 langchain-text-splitters
 sentence-transformers
+google-generativeai
+gspread
+google-auth
