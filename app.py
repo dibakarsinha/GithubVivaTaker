@@ -6,7 +6,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # -------------------------------
-# 🔹 Fetch Repo Files
+#  Fetch Repo Files
 # -------------------------------
 def get_repo_files(repo):
     url = f"https://api.github.com/repos/{repo}/contents"
@@ -25,7 +25,7 @@ def get_repo_files(repo):
     return "\n".join(contents)
 
 # -------------------------------
-# 🔹 Build FAISS DB
+#  Build FAISS DB
 # -------------------------------
 @st.cache_resource
 def build_vector_db(code_text):
@@ -40,7 +40,7 @@ def build_vector_db(code_text):
     return db
 
 # -------------------------------
-# 🔹 Generate Questions (Offline)
+#  Generate Questions (Offline)
 # -------------------------------
 def generate_questions():
     return [
@@ -52,7 +52,7 @@ def generate_questions():
     ]
 
 # -------------------------------
-# 🔹 Evaluate Answer (Simple Scoring)
+#  Evaluate Answer (Simple Scoring)
 # -------------------------------
 def evaluate_answer(context, answer):
     score = 0
@@ -75,7 +75,7 @@ def evaluate_answer(context, answer):
 # -------------------------------
 # 🔹 UI
 # -------------------------------
-st.title("🎤 Offline RAG Viva (No API, No Limits)")
+st.title("MUJ Viva")
 
 repo = st.text_input("Enter GitHub Repo (username/repo)")
 
@@ -83,7 +83,7 @@ if st.button("Start Viva"):
     code = get_repo_files(repo)
 
     if not code:
-        st.error("❌ Could not fetch repo")
+        st.error(" Could not fetch repo")
     else:
         code = code[:5000]
         db = build_vector_db(code)
@@ -92,10 +92,10 @@ if st.button("Start Viva"):
         st.session_state["questions"] = generate_questions()
 
 # -------------------------------
-# 🔹 Questions
+#  Questions
 # -------------------------------
 if "questions" in st.session_state:
-    st.markdown("## 📝 Answer Questions")
+    st.markdown("##  Answer Questions")
 
     answers = []
 
@@ -107,7 +107,7 @@ if "questions" in st.session_state:
     if st.button("Submit Viva"):
         total = 0
 
-        st.markdown("## 📊 Evaluation")
+        st.markdown("## Evaluation")
 
         for i, q in enumerate(st.session_state["questions"]):
             context = st.session_state["db"].similarity_search(q, k=1)[0].page_content
@@ -118,4 +118,4 @@ if "questions" in st.session_state:
             total += score
 
         st.markdown("---")
-        st.subheader(f"🎯 Viva Marks: {total} / 15")
+        st.subheader(f" Viva Marks: {total} / 15")
