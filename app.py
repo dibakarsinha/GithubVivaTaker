@@ -1,12 +1,61 @@
 import streamlit as st
 import requests
+from datetime import datetime
+import pandas as pd
 
+# Gemini
+import google.generativeai as genai
+
+# RAG
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
+# Google Sheets
+import gspread
+from google.oauth2.service_account import Credentials
+
 # -------------------------------
-#  Fetch Repo Files
+# 🔑 CONFIG
+# -------------------------------
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None)
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+else:
+    model = None
+
+# -------------------------------
+# 🔹 GOOGLE SHEETS
+# -------------------------------
+def connect_sheet():
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ],
+    )
+    client = gspread.authorize(creds)
+    return client.open("VivaMarks").sheet1
+
+def save_to_sheet(name, repo, marks):
+    sheet = connect_sheet()
+    sheet.append_row([
+        name,
+        repo,
+        marks,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ])
+
+def load_sheet():
+    sheet = connect_sheet()
+    data = sheet.get_all_records()
+    return pd.DataFrame(data)
+
+# -------------------------------
+# 🔹 GITHUB FETCH
 # -------------------------------
 def get_repo_files(repo):
     url = f"https://api.github.com/repos/{repo}/contents"
@@ -25,97 +74,163 @@ def get_repo_files(repo):
     return "\n".join(contents)
 
 # -------------------------------
-#  Build FAISS DB
+# 🔹 VECTOR DB
 # -------------------------------
 @st.cache_resource
-def build_vector_db(code_text):
+def build_db(code):
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-    chunks = splitter.split_text(code_text)
+    chunks = splitter.split_text(code)
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    db = FAISS.from_texts(chunks, embeddings)
-    return db
+    return FAISS.from_texts(chunks, embeddings)
+
+def get_context(db, query):
+    docs = db.similarity_search(query, k=2)
+    return "\n".join([d.page_content for d in docs])
 
 # -------------------------------
-#  Generate Questions (Offline)
+# 🔹 QUESTIONS
 # -------------------------------
-def generate_questions():
+def offline_questions():
     return [
-        "Explain the main functionality of your project.",
-        "Describe the core logic used in your code.",
-        "What technologies or libraries are used and why?",
-        "What are the limitations of your implementation?",
-        "How can this project be improved?"
+        "Explain your project.",
+        "What is core logic?",
+        "Why this approach?",
+        "Limitations?",
+        "Improvements?"
     ]
 
-# -------------------------------
-#  Evaluate Answer (Simple Scoring)
-# -------------------------------
-def evaluate_answer(context, answer):
-    score = 0
+def generate_questions_ai(context):
+    if not model:
+        return None
 
-    # Basic keyword matching
-    context_words = set(context.lower().split())
-    answer_words = set(answer.lower().split())
-
-    match_ratio = len(context_words & answer_words) / (len(context_words) + 1)
-
-    if match_ratio > 0.2:
-        score = 3
-    elif match_ratio > 0.1:
-        score = 2
-    else:
-        score = 1
-
-    return score
+    try:
+        res = model.generate_content(f"Generate 5 viva questions:\n{context[:2000]}")
+        qs = [q.strip() for q in res.text.split("\n") if q.strip()]
+        return qs if len(qs) >= 5 else None
+    except:
+        return None
 
 # -------------------------------
-# 🔹 UI
+# 🔹 EVALUATION
 # -------------------------------
-st.title("MUJ Viva")
+def eval_offline(context, ans):
+    cw = set(context.lower().split())
+    aw = set(ans.lower().split())
+    ratio = len(cw & aw) / (len(cw) + 1)
 
-repo = st.text_input("Enter GitHub Repo (username/repo)")
+    if ratio > 0.2:
+        return 3
+    elif ratio > 0.1:
+        return 2
+    return 1
 
-if st.button("Start Viva"):
-    code = get_repo_files(repo)
+def eval_ai(context, q, a):
+    if not model:
+        return "AI disabled"
 
-    if not code:
-        st.error(" Could not fetch repo")
-    else:
-        code = code[:5000]
-        db = build_vector_db(code)
-
-        st.session_state["db"] = db
-        st.session_state["questions"] = generate_questions()
+    try:
+        res = model.generate_content(
+            f"Context:{context[:1500]}\nQ:{q}\nA:{a}\nScore out of 3 with reason"
+        )
+        return res.text
+    except:
+        return "AI error"
 
 # -------------------------------
-#  Questions
+# 🔹 UI NAVIGATION
 # -------------------------------
-if "questions" in st.session_state:
-    st.markdown("##  Answer Questions")
+menu = st.sidebar.radio("Navigation", ["Student Viva", "Faculty Dashboard"])
 
-    answers = []
+# ===============================
+# 🎓 STUDENT SIDE
+# ===============================
+if menu == "Student Viva":
 
-    for i, q in enumerate(st.session_state["questions"]):
-        st.write(f"Q{i+1}: {q}")
-        ans = st.text_input(f"Answer {i+1}", key=f"ans_{i}")
-        answers.append(ans)
+    st.title("🎤 Viva Evaluation System")
 
-    if st.button("Submit Viva"):
-        total = 0
+    name = st.text_input("Student Name")
+    repo = st.text_input("GitHub Repo (username/repo)")
 
-        st.markdown("## Evaluation")
+    if st.button("Start Viva"):
+        code = get_repo_files(repo)
 
-        for i, q in enumerate(st.session_state["questions"]):
-            context = st.session_state["db"].similarity_search(q, k=1)[0].page_content
+        if not code:
+            st.error("❌ Repo fetch failed")
+        else:
+            code = code[:5000]
+            db = build_db(code)
 
-            score = evaluate_answer(context, answers[i])
+            st.session_state["db"] = db
+            context = get_context(db, "project")
 
-            st.write(f"Q{i+1}: Score {score}/3")
-            total += score
+            qs = generate_questions_ai(context)
+            if not qs:
+                qs = offline_questions()
 
-        st.markdown("---")
-        st.subheader(f" Viva Marks: {total} / 15")
+            st.session_state["qs"] = qs
+
+    if "qs" in st.session_state:
+        answers = []
+
+        st.markdown("## Questions")
+
+        for i, q in enumerate(st.session_state["qs"]):
+            st.write(f"Q{i+1}: {q}")
+            ans = st.text_input(f"Answer {i+1}", key=f"a{i}")
+            answers.append(ans)
+
+        if st.button("Submit Viva"):
+            total = 0
+            contexts = []
+
+            for i, q in enumerate(st.session_state["qs"]):
+                ctx = st.session_state["db"].similarity_search(q, k=1)[0].page_content
+                contexts.append(ctx)
+
+                score = eval_offline(ctx, answers[i])
+                total += score
+
+                st.write(f"Q{i+1}: {score}/3")
+
+            st.subheader(f"Total: {total}/15")
+
+            save_to_sheet(name, repo, total)
+            st.success("✅ Saved to Google Sheets")
+
+            st.session_state["contexts"] = contexts
+            st.session_state["answers"] = answers
+            st.session_state["total"] = total
+
+    if "total" in st.session_state:
+        if st.button("Upgrade with AI"):
+            st.markdown("### AI Evaluation")
+
+            for i, q in enumerate(st.session_state["qs"]):
+                fb = eval_ai(
+                    st.session_state["contexts"][i],
+                    q,
+                    st.session_state["answers"][i]
+                )
+                st.write(f"Q{i+1}: {fb}")
+
+# ===============================
+# 📊 FACULTY DASHBOARD
+# ===============================
+if menu == "Faculty Dashboard":
+
+    st.title("📊 Faculty Dashboard")
+
+    if st.button("Load Data"):
+        df = load_sheet()
+
+        st.dataframe(df)
+
+        st.download_button(
+            "Download CSV",
+            df.to_csv(index=False),
+            "viva_marks.csv"
+        )
