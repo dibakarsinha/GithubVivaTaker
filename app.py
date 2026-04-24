@@ -19,10 +19,12 @@ from google.oauth2.service_account import Credentials
 # 🔑 CONFIG
 # -------------------------------
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None)
-
+for m in genai.list_models():
+    if "generateContent" in m.supported_generation_methods:
+        st.write(m.name)
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash-latest")
+    model = genai.GenerativeModel("models/gemini-pro")
 else:
     model = None
 
