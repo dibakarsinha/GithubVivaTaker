@@ -62,7 +62,7 @@ def load_sheet():
 def get_repo_files(repo):
     url = f"https://api.github.com/repos/{repo}/contents"
     res = requests.get(url)
-
+    st.write("Status Code:", res.status_code)
     if res.status_code != 200:
         return ""
 
