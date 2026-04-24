@@ -157,15 +157,30 @@ def eval_offline(context, ans):
 
 def eval_ai(context, q, a):
     if not model:
-        return "AI disabled"
+        return "❌ AI disabled (check API key)"
+
+    if not context.strip():
+        return "❌ Empty context (repo issue)"
 
     try:
-        res = model.generate_content(
-            f"Context:{context[:1500]}\nQ:{q}\nA:{a}\nScore out of 3 with reason"
-        )
+        prompt = f"""
+        Context:
+        {context[:1000]}
+
+        Question:
+        {q}
+
+        Answer:
+        {a}
+
+        Give score out of 3 with reason.
+        """
+
+        res = model.generate_content(prompt)
         return res.text
-    except:
-        return "AI error"
+
+    except Exception as e:
+        return f"❌ AI error: {str(e)}"
 
 # -------------------------------
 # 🔹 UI NAVIGATION
