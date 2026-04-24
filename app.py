@@ -128,7 +128,10 @@ def eval_offline(context, ans):
         return 3
     elif ratio > 0.1:
         return 2
-    return 1
+    elif ratio > 0.05:
+        return 1
+    else:
+        return 0
 
 def eval_ai(context, q, a):
     if not model:
