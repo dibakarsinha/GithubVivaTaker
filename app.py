@@ -24,7 +24,7 @@ for m in genai.list_models():
         st.write(m.name)
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("models/gemini-pro")
+    model = genai.GenerativeModel("gemini-2.5-flash")
 else:
     model = None
 
