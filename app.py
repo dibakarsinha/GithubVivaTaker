@@ -157,32 +157,26 @@ def eval_offline(context, ans):
     else:
         return 0
 
+import time
+
 def eval_ai(context, q, a):
     if not model:
-        return "❌ AI disabled (check API key)"
+        return "AI disabled"
 
-    if not context.strip():
-        return "❌ Empty context (repo issue)"
+    for attempt in range(2):
+        try:
+            res = model.generate_content(
+                f"Context:{context[:1000]}\nQ:{q}\nA:{a}\nScore out of 3"
+            )
+            return res.text
 
-    try:
-        prompt = f"""
-        Context:
-        {context[:1000]}
+        except Exception as e:
+            if "429" in str(e):
+                time.sleep(35)  # wait for quota reset
+            else:
+                return f"AI error: {e}"
 
-        Question:
-        {q}
-
-        Answer:
-        {a}
-
-        Give score out of 3 with reason.
-        """
-
-        res = model.generate_content(prompt)
-        return res.text
-
-    except Exception as e:
-        return f"❌ AI error: {str(e)}"
+    return "AI skipped due to rate limit"
 
 # -------------------------------
 # 🔹 UI NAVIGATION
