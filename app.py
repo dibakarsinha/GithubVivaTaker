@@ -60,21 +60,43 @@ def load_sheet():
 # 🔹 GITHUB FETCH
 # -------------------------------
 def get_repo_files(repo):
+    headers = {}
+
+    # Optional: GitHub token
+    if "GITHUB_TOKEN" in st.secrets:
+        headers["Authorization"] = f"Bearer {st.secrets['GITHUB_TOKEN']}"
+
+    def fetch(url):
+        res = requests.get(url, headers=headers)
+
+        st.write("Fetching:", url)
+        st.write("Status:", res.status_code)
+
+        if res.status_code != 200:
+            st.error(f"GitHub API Error: {res.text}")
+            return []
+
+        data = res.json()
+        all_files = []
+
+        for item in data:
+            if item["type"] == "file":
+                if item["name"].endswith((".py", ".js", ".html", ".java", ".cpp")):
+                    file_res = requests.get(item["download_url"])
+                    if file_res.status_code == 200:
+                        all_files.append(file_res.text[:2000])
+
+            elif item["type"] == "dir":
+                all_files.extend(fetch(item["url"]))  # 🔥 recursion
+
+        return all_files
+
     url = f"https://api.github.com/repos/{repo}/contents"
-    res = requests.get(url)
-    st.write("Status Code:", res.status_code)
-    if res.status_code != 200:
-        return ""
+    files = fetch(url)
 
-    contents = []
-    for file in res.json():
-        if file["type"] == "file" and file["name"].endswith((".py", ".js", ".html")):
-            file_res = requests.get(file["download_url"])
-            if file_res.status_code == 200:
-                contents.append(file_res.text[:2000])
+    st.write("Total files fetched:", len(files))
 
-    return "\n".join(contents)
-
+    return "\n".join(files)
 # -------------------------------
 # 🔹 VECTOR DB
 # -------------------------------
