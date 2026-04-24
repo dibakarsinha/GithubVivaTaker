@@ -38,7 +38,9 @@ def connect_sheet():
         ],
     )
     client = gspread.authorize(creds)
-    return client.open("VivaMarks").sheet1
+    SHEET_ID = "1V1-NcPe2zsKa-eTXnWhTOewJVsCAoeM5WlYqKjREcPM"
+    return client.open_by_key(SHEET_ID).sheet1
+    
 
 def save_to_sheet(name, repo, marks):
     sheet = connect_sheet()
